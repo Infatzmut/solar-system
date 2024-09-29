@@ -137,7 +137,10 @@ jobs:
 
     dev-deploy:
       needs: [docker]
+      name: deploy
       runs-on: ubuntu-latest
+      outputs:
+        ingress_app: ${{ steps.ingress-app.outputs.APP_INGRESS_HOST }}
       steps:
         - name: Checkout Repo
           uses: actions/checkout@v4
@@ -178,3 +181,32 @@ jobs:
         - name: check files
           run: |
             cat kubernetes/development/*.yaml
+
+        ## TODO: Improve this 
+        - name: Create MongoDB Secret
+          run: | 
+            kubectl -n ${{ vars.NAMESPACE }} create secret generic mongo-db-creds \
+            --from-literal=MONGO_URI=${{ env.MONGO_URI }} \
+            --from-literal=MONGO_USERNAME=${{ env.MONGO_USERNAME }} \
+            --from-literal=MONGO_PASSWORD=${{ secrets.MONGO_PASSWORD }}    
+        - name: Deploy to Dev Env
+          run: |
+            kubectl apply -f kubernetes/development
+        
+        - name: Sep App ingress host url 
+          id: ingress-app
+          run: |
+            echo "APP_INGRESS_HOST=$(kubectl -n ${{ vars.NAMESPACE }} get ingress -o jsonpath="{.items[0].spec.tls[0].hosts[0]}")" >> "$GITHUB_OUTPUT"
+    
+    integration-testing:
+      name: Dev Integration Testing
+      needs: [dev-deploy]
+      runs-on: ubuntu-latest
+      steps: 
+        - name: Test URL Output using CURL and JQ
+          env: 
+            URL: ${{ needs.dev-deploy.outputs.ingress_app }}
+          run: |
+            echo $URL
+            echo "----------"
+            curl https://$URL/live -s -k | jq -r .status | grep -i live
