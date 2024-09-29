@@ -145,15 +145,36 @@ jobs:
         - name: Install kubectl CLI
           uses: azure/setup-kubectl@v3
           with:
-            version: 'v1.26.0'
+            version: 'latest'
         - name: Set kubernetes config 
           uses: azure/k8s-set-context@v3
           with: 
             method: kubeconfig
             kubeconfig: ${{ secrets.KUBECONFIG }}
-            
+
         - name: Fetch Kubernetes cluster details
           run: | 
             kubectl --version
             echo "----------"
             kubectl get nodes
+        - name: Save NGINX ingress controller ip as env variable
+          run: |
+            echo "INGRESS_IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath="{.status.loadbalancer.ingress[0].ip}")" >> "$GITHUB_ENV"
+        - name: Replace kubernetes values
+          uses: vinayaja/replace-token@v1.0.1
+          env: 
+            NAMESPACE: ${{ vars.NAMESPACE }}
+            REPLICAS: ${{ vars.REPLICAS }}
+            IMAGE: ${{ env.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
+            INGRESS_IP: ${{ env.INGRESS_IP }}
+          with:
+            gh-token: ${{ secrets.GITHUB_TOKEN }} 
+            Environment-Name: 'dev'  
+            Filespath: ${{ github.workspace}}/kubernetes/development/*.yaml
+            FileName: '.json'
+            tokenprefix: '_{_'
+            tokensuffix: '_}_'
+        
+        - name: check files
+          run: |
+            cat kubernetes/development/*.yaml
