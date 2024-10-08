@@ -31,14 +31,10 @@ jobs:
           with:
             node-version: ${{ matrix.nodejs_version}}
         
-        - name: cache npm dependencies
-          uses: actions/cache@v3
-          with: 
-            path: node_modules
-            key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json')}}
-
-        - name: Install Dependencies
-          run: npm install
+        - name: Composite Action - Cache & Install NPM packages
+          uses: ./.github/custom_actions/npm-action
+          with:
+            path-to-folder: node_modules
     
         - name: Unit Testing
           run: npm test
@@ -61,14 +57,10 @@ jobs:
           with: 
             node-version: 18
         
-        - name: cache npm dependencies
-          uses: actions/cache@v3
-          with: 
-            path: node_modules
-            key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json')}}    
-        
-        - name: Install Dependencies
-          run: npm install 
+        - name: Composite Action - Cache & Install NPM packages
+          uses: ./.github/custom_actions/npm-action
+          with:
+            path-to-folder: node_modules
         
         - name: Check code coverage
           run: npm run coverage
@@ -80,6 +72,42 @@ jobs:
             name: Code-coverage-result
             path: coverage
             retention-days: 5
+
+    reports-s3:
+      needs: [code-coverage, unit-testing]
+      continue-on-error: true
+      name: AWS S3 - Upload reports
+      runs-on: ubuntu-latest
+      steps:
+        - name: Download mocha test artifact 
+          uses: actions/download-artifact@v4
+          with:
+            name: Mocha-Test-Result
+        
+        - name: Download Code Coverage Artifact
+          uses: actions/download-artifact@v4
+          with: 
+            name: Code-Coverage-Result
+        
+        - name: Merge Test Files
+          run: |
+            ls -ltr
+            mkdir reports-${{ github.sha }}
+            mv cobertura-coverage.xml reports-${{ github.sha }}
+            mv test-results.xml reports-${{ github.sha }}
+            ls -ltr reports-${{ github.sha }}
+        
+        - name: Upload to AWS S3
+          uses: jakejarvis/s3-sync-action@master
+          with:
+            args: --follow-symlinks --delete
+          env: 
+            AWS_S3_BUCKET: solar-system-reports-bucket
+            AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            AWS_REGION: 'us-east-1'
+            SOURCE_DIR: 'reports-${{ github.sha }}'
+            DEST_DIR: 'reports-${{ github.sha }}'
 
     docker:
       name: containerization
@@ -155,7 +183,7 @@ jobs:
       steps: 
         - name: Test URL Output using CURL and JQ
           env: 
-            URL: ${{ needs.dev-deploy.outputs.ingress_app }}
+            URL: ${{ needs.dev-deploy.outputs.application-url }}
           run: |
             echo $URL
             echo "----------"
@@ -173,7 +201,7 @@ jobs:
         k8s-kubeconfig: ${{ secrets.KUBECONFIG }}
         mongodb-password: ${{ secrets.MONGO_PASSWORD }}
 
-    integration-testing:
+    prod-integration-testing:
       if: github.ref == 'refs/heads/main'
       name: Prod Integration Testing
       needs: [dev-deploy]
@@ -181,8 +209,26 @@ jobs:
       steps: 
         - name: Test URL Output using CURL and JQ
           env: 
-            URL: ${{ needs.prod-deploy.outputs.ingress_app }}
+            URL: ${{ needs.prod-deploy.outputs.application-url }}
           run: |
             echo $URL
             echo "----------"
             curl https://$URL/live -s -k | jq -r .status | grep -i live
+    
+    slack-notificacion:
+      if: always()
+      name: Slack notificacion
+      needs: [integration-dev-testing, prod-integration-testing]
+      runs-on: ubuntu-latest
+      continue-on-error: true
+      steps:
+        - uses: actions/checkout@v4
+        - name: Slack notificacion
+          uses: rtCamp/action-slack-notify@v2
+          env: 
+            SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+            SLACK_CHANNEL: github-actions-channel-2 
+            SLACK_COLOR: ${{ job.status }}
+            SLACK_ICON: https://gitlab.com/sidd-harth/solar-system/-/raw/main/images/saturn.png
+            SLACK_MESSAGE: ':hammer_and_wrench: Triggered by ${{ github.actor }}'
+            SLACK_TITLE: Information
