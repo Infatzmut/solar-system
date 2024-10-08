@@ -1,0 +1,15 @@
+on:
+    pull_request:
+        types:
+            - opened
+
+jobs:
+    pr-action:
+        runs-on: ubuntu-latest
+        permissions:
+            issues: write
+            pull-requests: write
+        
+        steps:
+            - name: Post PR Comment
+              uses: Infatzmut/js-action-pr-giphy-comment@1.0.0-alpha
